@@ -26,7 +26,7 @@ export default async function handler(req, res) {
           name: campaignName,
           subject,
           body,
-          status: 'draft'
+          status: 'scheduled'
         }
       ])
       .select()
