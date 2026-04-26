@@ -8,6 +8,7 @@ const supabase = createClient(
 
 export default async function handler(req, res) {
   try {
+    // 1. Get scheduled campaigns
     const { data: campaigns, error } = await supabase
       .from('campaigns')
       .select('*')
@@ -24,26 +25,48 @@ export default async function handler(req, res) {
     });
 
     for (const campaign of campaigns) {
-      const recipients = campaign.recipients.split(',');
+      // 2. Get recipients for this campaign
+      const { data: recipients, error: recError } = await supabase
+        .from('recipients')
+        .select('*')
+        .eq('campaign_id', campaign.id);
 
-      for (const email of recipients) {
-        await transporter.sendMail({
-          from: process.env.GMAIL_EMAIL,
-          to: email.trim(),
-          subject: campaign.subject,
-          html: campaign.body,
-        });
+      if (recError) throw recError;
+
+      for (const r of recipients) {
+        try {
+          await transporter.sendMail({
+            from: process.env.GMAIL_EMAIL,
+            to: r.email,
+            subject: campaign.subject,
+            html: campaign.body,
+          });
+
+          // update recipient status
+          await supabase
+            .from('recipients')
+            .update({ status: 'sent' })
+            .eq('id', r.id);
+
+        } catch (err) {
+          await supabase
+            .from('recipients')
+            .update({ status: 'failed' })
+            .eq('id', r.id);
+        }
       }
 
+      // 3. mark campaign as sent
       await supabase
         .from('campaigns')
         .update({ status: 'sent' })
         .eq('id', campaign.id);
     }
 
-    res.status(200).json({ success: true });
+    return res.status(200).json({ success: true });
 
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('CRON ERROR:', err);
+    return res.status(500).json({ error: err.message });
   }
 }
