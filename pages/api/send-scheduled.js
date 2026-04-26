@@ -6,9 +6,11 @@ const supabase = createClient(
   process.env.SUPABASE_ANON_KEY
 );
 
+// ⏱ delay helper
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
 export default async function handler(req, res) {
   try {
-    // 1. Get campaigns that need processing
     const { data: campaigns, error } = await supabase
       .from('campaigns')
       .select('*')
@@ -26,7 +28,7 @@ export default async function handler(req, res) {
 
     for (const campaign of campaigns) {
 
-      // 🔒 Try to lock if still scheduled
+      // 🔒 atomic lock
       if (campaign.status === 'scheduled') {
         const { data: locked } = await supabase
           .from('campaigns')
@@ -38,7 +40,7 @@ export default async function handler(req, res) {
         if (!locked || locked.length === 0) continue;
       }
 
-      // 2. Get ONLY 5 unsent recipients
+      // get 5 pending recipients
       const { data: recipients, error: recError } = await supabase
         .from('recipients')
         .select('*')
@@ -48,7 +50,7 @@ export default async function handler(req, res) {
 
       if (recError) throw recError;
 
-      // 👉 If no more recipients → mark campaign done
+      // no more recipients → mark sent
       if (!recipients || recipients.length === 0) {
         await supabase
           .from('campaigns')
@@ -58,11 +60,11 @@ export default async function handler(req, res) {
         continue;
       }
 
-      // 3. Send batch of 5
+      // 🚀 send with delay
       for (const r of recipients) {
         try {
           await transporter.sendMail({
-            from: process.env.GMAIL_EMAIL,
+            from: `"${process.env.SENDER_NAME}" <${process.env.GMAIL_EMAIL}>`,
             to: r.email,
             subject: campaign.subject,
             html: campaign.body,
@@ -79,6 +81,9 @@ export default async function handler(req, res) {
             .update({ status: 'failed' })
             .eq('id', r.id);
         }
+
+        // ⏱ DELAY BETWEEN EMAILS (adjust this)
+        await delay(3000); // 3 seconds
       }
     }
 

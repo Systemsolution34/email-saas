@@ -59,7 +59,7 @@ export default async function handler(req, res) {
         await delay(2000); // ⏱ 2 seconds between emails
 
         const info = await transporter.sendMail({
-          from: `"System Solutions" <${process.env.GMAIL_EMAIL}>`,
+          from: `"${process.env.SENDER_NAME}" <${process.env.GMAIL_EMAIL}>`,
           to: r.email,
           subject: campaign.subject,
           text: campaign.body.replace(/<[^>]*>?/gm, ''), // plain text fallback
