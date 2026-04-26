@@ -16,6 +16,7 @@ export default async function handler(req, res) {
 
     if (error) throw error;
 
+    // 2. Setup email transporter
     const transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: {
@@ -24,8 +25,16 @@ export default async function handler(req, res) {
       },
     });
 
+    // 3. Process each campaign
     for (const campaign of campaigns) {
-      // 2. Get recipients for this campaign
+
+      // 🔒 LOCK immediately to prevent duplicates
+      await supabase
+        .from('campaigns')
+        .update({ status: 'sending' })
+        .eq('id', campaign.id);
+
+      // 4. Get recipients for this campaign
       const { data: recipients, error: recError } = await supabase
         .from('recipients')
         .select('*')
@@ -33,6 +42,7 @@ export default async function handler(req, res) {
 
       if (recError) throw recError;
 
+      // 5. Send emails
       for (const r of recipients) {
         try {
           await transporter.sendMail({
@@ -42,13 +52,14 @@ export default async function handler(req, res) {
             html: campaign.body,
           });
 
-          // update recipient status
+          // mark recipient as sent
           await supabase
             .from('recipients')
             .update({ status: 'sent' })
             .eq('id', r.id);
 
         } catch (err) {
+          // mark recipient as failed
           await supabase
             .from('recipients')
             .update({ status: 'failed' })
@@ -56,7 +67,7 @@ export default async function handler(req, res) {
         }
       }
 
-      // 3. mark campaign as sent
+      // 6. Mark campaign as sent
       await supabase
         .from('campaigns')
         .update({ status: 'sent' })
