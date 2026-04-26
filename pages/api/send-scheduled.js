@@ -16,7 +16,6 @@ export default async function handler(req, res) {
 
     if (error) throw error;
 
-    // 2. Setup email transporter
     const transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: {
@@ -25,16 +24,24 @@ export default async function handler(req, res) {
       },
     });
 
-    // 3. Process each campaign
     for (const campaign of campaigns) {
 
-      // 🔒 LOCK immediately to prevent duplicates
-      await supabase
+      // 🔒 ATOMIC LOCK (only one process succeeds)
+      const { data: locked, error: lockError } = await supabase
         .from('campaigns')
         .update({ status: 'sending' })
-        .eq('id', campaign.id);
+        .eq('id', campaign.id)
+        .eq('status', 'scheduled') // 👈 critical condition
+        .select();
 
-      // 4. Get recipients for this campaign
+      if (lockError) throw lockError;
+
+      // ❌ If no rows updated → another cron already took it
+      if (!locked || locked.length === 0) {
+        continue;
+      }
+
+      // 2. Get recipients
       const { data: recipients, error: recError } = await supabase
         .from('recipients')
         .select('*')
@@ -42,7 +49,7 @@ export default async function handler(req, res) {
 
       if (recError) throw recError;
 
-      // 5. Send emails
+      // 3. Send emails
       for (const r of recipients) {
         try {
           await transporter.sendMail({
@@ -52,14 +59,12 @@ export default async function handler(req, res) {
             html: campaign.body,
           });
 
-          // mark recipient as sent
           await supabase
             .from('recipients')
             .update({ status: 'sent' })
             .eq('id', r.id);
 
         } catch (err) {
-          // mark recipient as failed
           await supabase
             .from('recipients')
             .update({ status: 'failed' })
@@ -67,7 +72,7 @@ export default async function handler(req, res) {
         }
       }
 
-      // 6. Mark campaign as sent
+      // 4. Mark campaign as sent
       await supabase
         .from('campaigns')
         .update({ status: 'sent' })
